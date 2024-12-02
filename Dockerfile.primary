@@ -1,0 +1,16 @@
+FROM ubuntu:latest
+LABEL authors="olgagrytsenko"
+
+ENTRYPOINT ["top", "-b"]
+
+FROM python:3.9-slim
+
+WORKDIR /app
+
+COPY requirements.txt ./
+RUN pip install -r requirements.txt
+
+EXPOSE 5000
+COPY primary.py ./
+ENV PORT=5000
+CMD ["python", "primary.py"]

@@ -1,0 +1,35 @@
+networks:
+  frontend:
+    driver: bridge
+  backend:
+    driver: bridge
+services:
+  primary:
+    build:
+      context: .
+      dockerfile: Dockerfile.primary
+    ports:
+      - "127.0.0.1:5000:5000"
+    depends_on:
+      - secondary1
+      - secondary2
+    networks:
+      - frontend
+      - backend
+  secondary1:
+    build:
+      context: .
+      dockerfile: Dockerfile.secondary
+    ports:
+      - "127.0.0.1:5001:5001"
+    networks:
+      - backend
+  secondary2:
+    build:
+      context: .
+      dockerfile: Dockerfile.secondary
+    ports:
+      - "127.0.0.1:5002:5001"
+    networks:
+      - backend
+
