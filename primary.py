@@ -27,7 +27,8 @@ def replicate_message_to_secondary(secondary_url, message):
 
 @app.route("/log", methods = ["POST"])
 def append_message():
-    message = request.json
+    data = request.json
+    message = data['message']
     messages.append(message)
     logging.info(f"Message {message} appended to primary")
 
