@@ -1,3 +1,5 @@
+import threading
+import uuid
 from venv import logger
 
 from flask import Flask, request, jsonify
@@ -5,86 +7,66 @@ import requests
 import logging
 from concurrent.futures import ThreadPoolExecutor, as_completed
 
-
 import os
 
 app = Flask(__name__)
 messages = []
+message_ids = set()
+message_texts = set()
 SECONDARY_SERVERS = ['http://secondary1:5001', 'http://secondary2:5001']
-#SECONDARY_SERVERS = [('secondary1', 5001), ('secondary2', 5001)]
+messages_lock = threading.Lock()
 
-logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(name)s - %(levelname)s - %(message)s')
-logger = logging.getLogger(__name__)
+@app.route('/log', methods=['POST'])
+def add_message():
+    global messages, message_ids, message_texts
+    content = request.json
+    message = content.get('message')
+    message_id = content.get('message_id', str(uuid.uuid4()))
+    write_concern = content.get('w', len(SECONDARY_SERVERS) + 1)
 
-def replicate_message_to_secondary(secondary_url, message):
-    try:
-        response = requests.post(f"{secondary_url}/replicate", json={"message": message}, timeout=10)
-        response.raise_for_status()
-        return True
-    except requests.RequestException as e:
-        logging.error(f"Failed to replicate to {secondary_url}: {e}")
-        return False
+    if not message:
+        return "Message is required", 400
 
-@app.route("/log", methods = ["POST"])
-def append_message():
-    data = request.json
-    message = data['message']
-    messages.append(message)
-    logging.info(f"Message {message} appended to primary")
+    with messages_lock:
+        if message_id in message_ids or message_id in message_texts:
+            return jsonify(f"Message already exists"), 400
 
-    # Replicate the message to secondary in parallel
-    with ThreadPoolExecutor(max_workers=len(SECONDARY_SERVERS)) as executor:
-        future_to_secondary = {executor.submit(replicate_message_to_secondary, secondary, message): secondary for secondary in SECONDARY_SERVERS}
+        messages.append({"message_id": message_id, "message": message})
+        message_ids.add(message_id)
+        message_texts.add(message)
 
-        results = {}
-        for future in as_completed(future_to_secondary):
-            secondary = future_to_secondary[future]
-            try:
-                results[secondary] = future.result()
-            except Exception as e:
-                logging.error(f"exception raised during replication to {secondary}: {e}")
-                results[secondary] = False
+    acks = 1
+    acks_lock = threading.Lock()
+    duplicates_detected = False
 
-    if all(results.values()):
-        return jsonify({"message": "Message appended and replicated to all secondaries"})
+    def replicate_message(message, message_id, secondary):
+        nonlocal acks, duplicates_detected
+        try:
+            response = requests.post(f"{secondary}/replicate", json={"message_id": message_id, "message": message})
+            if response.status_code == 200:
+                with acks_lock:
+                    acks += 1
+            elif response.status_code == 400:
+                duplicates_detected = True
+        except Exception as e:
+            logging.error(f"Acknowledgement failed from {secondary}: {e}")
+
+    threads = []
+
+    for secondary in SECONDARY_SERVERS:
+        thread = threading.Thread(target=replicate_message, args = (message, message_id, secondary))
+        threads.append(thread)
+        thread.start()
+
+    for thread in threads:
+        thread.join()
+
+    if duplicates_detected:
+        return "Duplicate message detected", 400
+    elif acks >= int(write_concern):
+        return "Message added successfully", 201
     else:
-        messages.remove(message)
-        failure_msgs = [
-            f"{secondary}: {'Success' if status else 'Failed'}" for secondary, status in results.items()
-        ]
-        logging.error(f"Replication failed for message: {message}")
-        return jsonify({"error": f"Replication for some or all secondaries failed: {failure_msgs}"}), 500
-
-
-
-
-# @app.route('/log', methods=['POST'])
-# def append_messages():
-#     print ("Entering append_messages")
-#     data = request.json
-#     message = data['message']
-#     print ("Sending")
-#     messages.append(message)
-#     logger.info(f"Message '{message}' append to primary")
-#
-#     # Replicating the message to all secondary servers
-#     logger.info("About to start replication")
-#     for secondary in SECONDARY_SERVERS:
-#         logger.info("Trying to connect to secondary server")
-#
-#         secondary_host, secondary_port = secondary
-#
-#         url = f"http://{secondary_host}:{secondary_port}/replicate"
-#         logger.info(f"{secondary_host} and {secondary_port}")
-#         response = requests.post(url, json={'message': message})
-#         logger.info(f"{response.text}")
-#
-#         if response.status_code != 200:
-#             return response.text, 500
-#
-#     logger.info(f"Messages sent to all servers")
-#     return 'Message appended and replicated', 200
-#
+        return "Failed to meet write concern", 500
 
 @app.route('/log', methods=['GET'])
 def get_message():
