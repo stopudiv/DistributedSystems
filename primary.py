@@ -38,14 +38,14 @@ def add_message():
 
     with messages_lock:
         if message_id in message_ids or message_id in message_texts:
-            return jsonify(f"Message already exists"), 400
+            return jsonify(f"Message already exists"), 400 # Duplication message
 
+        # Add the message on the primary node
         messages.append({"message_id": message_id, "message": message})
         message_ids.add(message_id)
         message_texts.add(message)
 
     acks = 1
-    #acks_lock = threading.Lock()
     duplicates_detected = False
 
     def replicate_to_secondary(secondary):
@@ -69,7 +69,6 @@ def add_message():
             threads.append(thread)
             thread.start()
 
-
     for thread in threads:
         thread.join()
 
@@ -83,7 +82,6 @@ def add_message():
 @app.route('/log', methods=['GET'])
 def get_message():
     logger.info(f"Fetching messages")
-    print("Fetching messages")
     return jsonify(messages)
 
 @app.route('/health', methods=['GET'])
@@ -91,7 +89,6 @@ def health_status():
     return jsonify(secondary_status)
 
 def replicate_message(message, message_id, secondary):
-    #nonlocal acks, duplicates_detected
     retry_attempts = 0
     while True:
         try:
@@ -116,6 +113,8 @@ def heartbeat():
                 if response.status_code == 200:
                     secondary_status[secondary] = "Healthy"
                     healthy_count += 1
+                else:
+                    raise Exception(f"Secondary unhealthy response")
             except:
                 if secondary_status[secondary] == "Healthy":
                     secondary_status[secondary] = "Suspected"

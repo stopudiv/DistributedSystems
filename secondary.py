@@ -18,22 +18,24 @@ def replicate_message():
     data = request.json
     message = data['message']
     message_id = data['message_id']
-    #time.sleep(2)
+
     if not message or not message_id:
         return "Message and Message ID are required", 400
+
     with lock:
         if message_id in message_ids or message in message_texts:
             return "Message already exists", 400
 
         if random.random() < 0.1:
             return "Internal Server Error", 500
-        #time.sleep(5)
 
-        # Maintain order - ensure previous messages are received first
-        expected_message_id = len(replicated_messages) + 1
-        start = time.perf_counter()
-        while not (str(expected_message_id) in message_ids or time.perf_counter() - start > 60):
-            time.sleep(1)
+        time.sleep(5)
+
+        # # Maintain order - ensure previous messages are received first
+        # expected_message_id = len(replicated_messages) + 1
+        # start = time.perf_counter()
+        # while not (str(expected_message_id) in message_ids or time.perf_counter() - start > 60):
+        #     time.sleep(1)
 
         # Add message to the secondary server
         replicated_messages.append({"message_id": message_id, "message": message})
